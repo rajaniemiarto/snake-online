@@ -1,0 +1,285 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  touch-action: manipulation;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+#app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.hidden {
+  display: none !important;
+}
+
+h1 {
+  font-size: 1.8rem;
+  margin-top: 12px;
+  color: #4ade80;
+}
+
+.subtitle {
+  color: #94a3b8;
+  font-size: 0.9rem;
+  margin-bottom: 20px;
+}
+
+.share-box {
+  background: #1e293b;
+  border-radius: 12px;
+  padding: 16px;
+  width: 100%;
+  max-width: 400px;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.share-label {
+  font-size: 0.85rem;
+  color: #94a3b8;
+  margin-bottom: 8px;
+}
+
+.share-url {
+  font-size: 0.95rem;
+  word-break: break-all;
+  color: #60a5fa;
+  margin-bottom: 12px;
+  padding: 8px;
+  background: #0f172a;
+  border-radius: 8px;
+}
+
+.btn-copy {
+  background: #334155;
+  color: #e2e8f0;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.btn-copy:active {
+  background: #475569;
+}
+
+.name-row {
+  width: 100%;
+  max-width: 400px;
+  margin-bottom: 16px;
+}
+
+#nameInput {
+  width: 100%;
+  padding: 14px 16px;
+  font-size: 1rem;
+  border: 2px solid #334155;
+  border-radius: 10px;
+  background: #1e293b;
+  color: #e2e8f0;
+  outline: none;
+}
+
+#nameInput:focus {
+  border-color: #4ade80;
+}
+
+.player-list {
+  width: 100%;
+  max-width: 400px;
+  margin-bottom: 16px;
+}
+
+.player-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #1e293b;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  font-size: 0.95rem;
+}
+
+.player-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.player-ready {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: #4ade80;
+}
+
+.lobby-status {
+  text-align: center;
+  color: #94a3b8;
+  font-size: 0.9rem;
+  margin-bottom: 16px;
+  min-height: 24px;
+}
+
+.lobby-status.countdown {
+  color: #fbbf24;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.btn-ready {
+  width: 100%;
+  max-width: 400px;
+  padding: 16px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 12px;
+  background: #4ade80;
+  color: #0f172a;
+  cursor: pointer;
+  margin-top: auto;
+  margin-bottom: 16px;
+}
+
+.btn-ready:active {
+  background: #22c55e;
+}
+
+.btn-ready.is-ready {
+  background: #334155;
+  color: #94a3b8;
+}
+
+.btn-ready:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Game screen */
+#gameScreen {
+  padding: 0;
+  justify-content: flex-start;
+}
+
+.hud {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+#canvas {
+  flex: 1;
+  width: 100%;
+  max-height: calc(100% - 160px);
+  display: block;
+  background: #0f172a;
+}
+
+.controls {
+  flex-shrink: 0;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  max-width: 280px;
+  margin: 0 auto;
+}
+
+.ctrl-row {
+  display: flex;
+  gap: 4px;
+}
+
+.ctrl-btn {
+  width: 72px;
+  height: 72px;
+  font-size: 1.5rem;
+  border: none;
+  border-radius: 12px;
+  background: #1e293b;
+  color: #e2e8f0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ctrl-btn:active {
+  background: #334155;
+}
+
+/* Overlay */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.92);
+  justify-content: center;
+  z-index: 10;
+}
+
+.overlay-card {
+  background: #1e293b;
+  border-radius: 16px;
+  padding: 28px 24px;
+  text-align: center;
+  max-width: 340px;
+  width: 90%;
+}
+
+.overlay-card h2 {
+  margin-bottom: 16px;
+  color: #4ade80;
+}
+
+#finalScores {
+  margin-bottom: 20px;
+  text-align: left;
+}
+
+.score-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid #334155;
+  font-size: 0.95rem;
+}
+
+.score-row.winner {
+  color: #4ade80;
+  font-weight: 600;
+}
+
+@media (min-height: 700px) {
+  .ctrl-btn {
+    width: 80px;
+    height: 80px;
+  }
+}

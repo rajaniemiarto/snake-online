@@ -1,0 +1,16 @@
+{
+  "name": "snake-online",
+  "version": "1.0.0",
+  "description": "Multiplayer Snake game for up to 4 players",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "ws": "^8.18.0"
+  }
+}
