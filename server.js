@@ -44,7 +44,8 @@ function getLocalIp() {
 }
 
 function getShareUrl() {
-  if (process.env.RENDER_EXTERNAL_URL) return process.env.RENDER_EXTERNAL_URL;
+  if (process.env.PUBLIC_URL) return process.env.PUBLIC_URL.replace(/\/$/, '');
+  if (process.env.RENDER_EXTERNAL_URL) return process.env.RENDER_EXTERNAL_URL.replace(/\/$/, '');
   return `http://${getLocalIp()}:${PORT}`;
 }
 
@@ -211,6 +212,10 @@ function checkGameOver() {
   return false;
 }
 
+function willEat(p, nh) {
+  return game.apples.some((a) => a.x === nh.x && a.y === nh.y);
+}
+
 function gameTick() {
   if (game.status !== 'playing') return;
 
@@ -223,31 +228,55 @@ function gameTick() {
   for (const [id, p] of game.players) {
     if (!p.alive) continue;
     const head = p.snake[0];
-    const nh = { x: head.x + p.direction.x, y: head.y + p.direction.y };
-    newHeads.set(id, nh);
+    newHeads.set(id, {
+      x: head.x + p.direction.x,
+      y: head.y + p.direction.y,
+    });
+  }
+
+  // Cells that stay occupied after this tick (exclude vacating tails when not eating)
+  const blocked = new Set();
+  for (const [id, p] of game.players) {
+    if (!p.alive) continue;
+    const nh = newHeads.get(id);
+    const eating = willEat(p, nh);
+    const last = eating ? p.snake.length : p.snake.length - 1;
+    for (let i = 0; i < last; i++) {
+      blocked.add(`${p.snake[i].x},${p.snake[i].y}`);
+    }
+  }
+
+  // Head-on / same-cell collisions between snakes
+  const headCounts = new Map();
+  for (const [id, nh] of newHeads) {
+    const p = game.players.get(id);
+    if (!p?.alive) continue;
+    const key = `${nh.x},${nh.y}`;
+    if (!headCounts.has(key)) headCounts.set(key, []);
+    headCounts.get(key).push(id);
   }
 
   for (const [id, p] of game.players) {
     if (!p.alive) continue;
     const nh = newHeads.get(id);
 
+    // Walls — hard bounds, no wrapping
     if (nh.x < 0 || nh.x >= GRID_W || nh.y < 0 || nh.y >= GRID_H) {
       killPlayer(p);
       continue;
     }
 
-    for (const [oid, op] of game.players) {
-      if (!op.alive) continue;
-      for (let i = 0; i < op.snake.length; i++) {
-        const seg = op.snake[i];
-        if (seg.x === nh.x && seg.y === nh.y) {
-          if (oid !== id || i < op.snake.length - 1) {
-            killPlayer(p);
-            break;
-          }
-        }
-      }
-      if (!p.alive) break;
+    const key = `${nh.x},${nh.y}`;
+
+    // Body / other snake / self (any remaining body segment)
+    if (blocked.has(key)) {
+      killPlayer(p);
+      continue;
+    }
+
+    // Two heads into the same cell
+    if ((headCounts.get(key) || []).length > 1) {
+      killPlayer(p);
     }
   }
 
@@ -308,11 +337,12 @@ wss.on('connection', (ws) => {
   }
 
   const id = Math.random().toString(36).slice(2, 10);
-  const color = COLORS[game.players.size % COLORS.length];
+  const colorIndex = [...game.players.values()].length % COLORS.length;
+  const color = COLORS[colorIndex];
   const player = {
     id,
     ws,
-    name: `Player ${game.players.size + 1}`,
+    name: '',
     ready: false,
     alive: false,
     score: 0,
@@ -338,11 +368,15 @@ wss.on('connection', (ws) => {
     if (!p) return;
 
     if (msg.type === 'setName' && typeof msg.name === 'string') {
-      p.name = msg.name.trim().slice(0, 12) || p.name;
+      p.name = msg.name.trim().slice(0, 12);
       broadcastState();
     }
 
     if (msg.type === 'ready' && (game.status === 'lobby' || game.status === 'countdown')) {
+      if (!p.name) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Enter a name for your snake first' }));
+        return;
+      }
       p.ready = true;
       checkCountdown();
       broadcastState();
@@ -395,13 +429,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('');
   console.log('  Snake Online is running!');
   console.log('');
-  if (process.env.RENDER_EXTERNAL_URL) {
-    console.log(`  Public URL: ${url}`);
-  } else {
-    console.log(`  On this PC:    http://localhost:${PORT}`);
-    console.log(`  On your phone: ${url}`);
-    console.log('');
-    console.log('  Share the phone link with friends on the same Wi-Fi.');
-  }
+  console.log(`  Public link:  ${url}`);
+  console.log(`  Local only:   http://localhost:${PORT}`);
   console.log('');
 });

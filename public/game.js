@@ -21,9 +21,8 @@ const hudScore = document.getElementById('hudScore');
 const gameOverTitle = document.getElementById('gameOverTitle');
 const finalScores = document.getElementById('finalScores');
 const playAgainBtn = document.getElementById('playAgainBtn');
-const controls = document.getElementById('controls');
 
-shareUrl.textContent = location.href;
+shareUrl.textContent = location.origin;
 
 copyBtn.addEventListener('click', () => {
   navigator.clipboard.writeText(shareUrl.textContent).then(() => {
@@ -32,16 +31,63 @@ copyBtn.addEventListener('click', () => {
   });
 });
 
-nameInput.addEventListener('change', () => {
-  ws.send(JSON.stringify({ type: 'setName', name: nameInput.value }));
+function isLocalUrl(url) {
+  try {
+    const host = new URL(url).hostname;
+    return (
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      /^192\.168\./.test(host) ||
+      /^10\./.test(host) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+    );
+  } catch {
+    return true;
+  }
+}
+
+function setShareLink(fromServer) {
+  // Prefer a public URL (Render / tunnel). Never show LAN IP if a public page URL exists.
+  if (fromServer && !isLocalUrl(fromServer)) {
+    shareUrl.textContent = fromServer;
+    return;
+  }
+  if (!isLocalUrl(location.origin)) {
+    shareUrl.textContent = location.origin;
+    return;
+  }
+  if (fromServer) shareUrl.textContent = fromServer;
+  else shareUrl.textContent = location.origin;
+}
+
+function sendName() {
+  const name = nameInput.value.trim();
+  ws.send(JSON.stringify({ type: 'setName', name }));
+  return name;
+}
+
+nameInput.addEventListener('input', () => {
+  nameInput.classList.toggle('invalid', !nameInput.value.trim());
+  sendName();
 });
 
-nameInput.addEventListener('blur', () => {
-  ws.send(JSON.stringify({ type: 'setName', name: nameInput.value }));
-});
+nameInput.addEventListener('change', sendName);
+nameInput.addEventListener('blur', sendName);
 
 readyBtn.addEventListener('click', () => {
-  if (state?.status !== 'lobby') return;
+  if (state?.status !== 'lobby' && state?.status !== 'countdown') return;
+
+  const name = sendName();
+  if (!name) {
+    nameInput.classList.add('invalid');
+    nameInput.focus();
+    lobbyStatus.textContent = 'Enter a name for your snake first';
+    lobbyStatus.className = 'lobby-status';
+    return;
+  }
+
+  if (state.status === 'countdown' && isReady) return;
+
   isReady = !isReady;
   ws.send(JSON.stringify({ type: isReady ? 'ready' : 'unready' }));
   readyBtn.textContent = isReady ? 'Not Ready' : 'Ready';
@@ -84,7 +130,10 @@ canvas.addEventListener('touchend', (e) => {
 }, { passive: true });
 
 document.addEventListener('keydown', (e) => {
-  const map = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', w: 'up', s: 'down', a: 'left', d: 'right' };
+  const map = {
+    ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+    w: 'up', s: 'down', a: 'left', d: 'right',
+  };
   if (map[e.key]) {
     e.preventDefault();
     sendDirection(map[e.key]);
@@ -100,12 +149,25 @@ ws.onmessage = (e) => {
   const msg = JSON.parse(e.data);
   if (msg.type === 'error') {
     alert(msg.message);
+    if (msg.message.toLowerCase().includes('name')) {
+      isReady = false;
+      readyBtn.textContent = 'Ready';
+      readyBtn.classList.remove('is-ready');
+      nameInput.classList.add('invalid');
+      nameInput.focus();
+    }
     return;
   }
   if (msg.type === 'state') {
     state = msg;
     myId = msg.you;
-    if (msg.shareUrl) shareUrl.textContent = msg.shareUrl;
+    if (msg.shareUrl) setShareLink(msg.shareUrl);
+    else setShareLink();
+    const me = msg.players.find((p) => p.id === myId);
+    if (me && me.name && document.activeElement !== nameInput) {
+      nameInput.value = me.name;
+    }
+    isReady = !!me?.ready;
     render();
   }
 };
@@ -136,20 +198,19 @@ function renderLobby() {
   playerList.innerHTML = state.players.map((p) => `
     <div class="player-item">
       <span class="player-dot" style="background:${p.color}"></span>
-      <span>${escapeHtml(p.name)}${p.id === myId ? ' (you)' : ''}</span>
+      <span>${escapeHtml(p.name || '…')}${p.id === myId ? ' (you)' : ''}</span>
       ${p.ready ? '<span class="player-ready">Ready</span>' : ''}
     </div>
   `).join('');
+
+  readyBtn.textContent = isReady ? 'Not Ready' : 'Ready';
+  readyBtn.classList.toggle('is-ready', isReady);
 
   if (state.status === 'countdown') {
     const secs = Math.ceil(state.countdownRemaining / 1000);
     lobbyStatus.textContent = `Starting in ${secs}s — others can still join!`;
     lobbyStatus.className = 'lobby-status countdown';
-    readyBtn.disabled = isReady || (state.players.length >= state.maxPlayers && !isReady);
-    if (isReady) {
-      readyBtn.textContent = 'Ready';
-      readyBtn.classList.add('is-ready');
-    }
+    readyBtn.disabled = isReady;
   } else {
     const ready = state.readyCount;
     if (ready < state.minPlayers) {
@@ -158,13 +219,13 @@ function renderLobby() {
       lobbyStatus.textContent = `${ready} ready — need ${state.minPlayers} to start`;
     }
     lobbyStatus.className = 'lobby-status';
-    readyBtn.disabled = state.players.length >= state.maxPlayers && !isReady;
+    readyBtn.disabled = false;
   }
 }
 
 function renderGame() {
   const me = state.players.find((p) => p.id === myId);
-  hudScore.textContent = me ? `Score: ${me.score}` : '';
+  hudScore.textContent = me ? `${me.name || 'You'} · ${me.score}` : '';
   hudStatus.textContent = me?.alive === false ? 'You died!' : '';
 
   resizeCanvas();
@@ -172,16 +233,14 @@ function renderGame() {
 }
 
 function resizeCanvas() {
-  const rect = canvas.parentElement.getBoundingClientRect();
-  const w = rect.width || window.innerWidth;
-  const h = rect.height || window.innerHeight - 160;
-
-  const cellW = w / state.gridW;
-  const cellH = h / state.gridH;
-  const cell = Math.floor(Math.min(cellW, cellH));
+  const maxW = window.innerWidth;
+  const maxH = window.innerHeight - 160;
+  const cell = Math.max(8, Math.floor(Math.min(maxW / state.gridW, maxH / state.gridH)));
 
   canvas.width = state.gridW * cell;
   canvas.height = state.gridH * cell;
+  canvas.style.width = `${canvas.width}px`;
+  canvas.style.height = `${canvas.height}px`;
   canvas._cell = cell;
 }
 
@@ -189,6 +248,11 @@ function drawBoard() {
   const cell = canvas._cell || 16;
   ctx.fillStyle = '#0f172a';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Visible wall border
+  ctx.strokeStyle = '#64748b';
+  ctx.lineWidth = Math.max(2, cell * 0.2);
+  ctx.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
 
   ctx.strokeStyle = '#1e293b';
   ctx.lineWidth = 1;
@@ -221,34 +285,92 @@ function drawBoard() {
 
   for (const p of state.players) {
     if (!p.snake || p.snake.length === 0) continue;
-    p.snake.forEach((seg, i) => {
-      ctx.fillStyle = p.color;
-      if (!p.alive) ctx.globalAlpha = 0.3;
-      const pad = i === 0 ? cell * 0.08 : cell * 0.12;
-      ctx.fillRect(seg.x * cell + pad, seg.y * cell + pad, cell - pad * 2, cell - pad * 2);
-      if (i === 0) {
-        ctx.fillStyle = '#0f172a';
-        const eye = cell * 0.15;
-        ctx.fillRect(seg.x * cell + cell * 0.25, seg.y * cell + cell * 0.3, eye, eye);
-        ctx.fillRect(seg.x * cell + cell * 0.55, seg.y * cell + cell * 0.3, eye, eye);
-      }
-      ctx.globalAlpha = 1;
-    });
+    drawSnake(p, cell);
   }
+}
+
+function drawSnake(p, cell) {
+  if (!p.alive) ctx.globalAlpha = 0.35;
+
+  p.snake.forEach((seg, i) => {
+    ctx.fillStyle = p.color;
+    const pad = i === 0 ? cell * 0.08 : cell * 0.12;
+    const r = Math.max(2, cell * 0.2);
+    roundRect(
+      seg.x * cell + pad,
+      seg.y * cell + pad,
+      cell - pad * 2,
+      cell - pad * 2,
+      r
+    );
+    ctx.fill();
+
+    if (i === 0) {
+      ctx.fillStyle = '#0f172a';
+      const eye = cell * 0.15;
+      ctx.fillRect(seg.x * cell + cell * 0.25, seg.y * cell + cell * 0.28, eye, eye);
+      ctx.fillRect(seg.x * cell + cell * 0.55, seg.y * cell + cell * 0.28, eye, eye);
+    }
+  });
+
+  drawNameOnSnake(p, cell);
+  ctx.globalAlpha = 1;
+}
+
+function drawNameOnSnake(p, cell) {
+  const name = (p.name || '?').toUpperCase();
+  if (!name || p.snake.length === 0) return;
+
+  ctx.save();
+  ctx.font = `bold ${Math.max(9, Math.floor(cell * 0.72))}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#0f172a';
+
+  // Paint letters along the body so the name stays on the worm while it moves
+  const chars = name.split('');
+  const spacing = Math.max(1, Math.floor(p.snake.length / chars.length));
+
+  chars.forEach((ch, i) => {
+    const segIndex = Math.min(p.snake.length - 1, 1 + i * spacing);
+    const seg = p.snake[segIndex];
+    if (!seg) return;
+    const x = seg.x * cell + cell / 2;
+    const y = seg.y * cell + cell / 2;
+    ctx.fillText(ch, x, y);
+  });
+
+  // Always show full name near the head so it's readable even when short
+  const head = p.snake[0];
+  ctx.font = `bold ${Math.max(10, Math.floor(cell * 0.85))}px sans-serif`;
+  ctx.lineWidth = Math.max(2, cell * 0.12);
+  ctx.strokeStyle = 'rgba(15, 23, 42, 0.85)';
+  ctx.fillStyle = '#f8fafc';
+  const labelX = head.x * cell + cell / 2;
+  const labelY = head.y * cell - cell * 0.55;
+  ctx.strokeText(name, labelX, labelY);
+  ctx.fillText(name, labelX, labelY);
+  ctx.restore();
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 function renderGameOver() {
   const winner = state.players.find((p) => p.id === state.winner);
-  if (winner) {
-    gameOverTitle.textContent = `${winner.name} wins!`;
-  } else {
-    gameOverTitle.textContent = 'Draw!';
-  }
+  gameOverTitle.textContent = winner ? `${winner.name} wins!` : 'Draw!';
 
   const sorted = [...state.players].sort((a, b) => b.score - a.score);
   finalScores.innerHTML = sorted.map((p) => `
     <div class="score-row${p.id === state.winner ? ' winner' : ''}">
-      <span><span class="player-dot" style="display:inline-block;background:${p.color};width:10px;height:10px;border-radius:50%;margin-right:6px"></span>${escapeHtml(p.name)}</span>
+      <span><span class="player-dot" style="display:inline-block;background:${p.color};width:10px;height:10px;border-radius:50%;margin-right:6px"></span>${escapeHtml(p.name || 'unnamed')}</span>
       <span>${p.score}</span>
     </div>
   `).join('');

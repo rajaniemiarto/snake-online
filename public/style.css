@@ -91,6 +91,13 @@ h1 {
   margin-bottom: 16px;
 }
 
+.name-label {
+  display: block;
+  font-size: 0.9rem;
+  color: #94a3b8;
+  margin-bottom: 8px;
+}
+
 #nameInput {
   width: 100%;
   padding: 14px 16px;
@@ -104,6 +111,10 @@ h1 {
 
 #nameInput:focus {
   border-color: #4ade80;
+}
+
+#nameInput.invalid {
+  border-color: #ef4444;
 }
 
 .player-list {
@@ -197,10 +208,10 @@ h1 {
 
 #canvas {
   flex: 1;
-  width: 100%;
-  max-height: calc(100% - 160px);
   display: block;
+  margin: 0 auto;
   background: #0f172a;
+  max-width: 100%;
 }
 
 .controls {
