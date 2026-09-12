@@ -13,13 +13,23 @@ const TURN_RATE = 0.14;
 const SEGMENT_SPACING = 6;
 const BASE_SEGMENTS = 14;
 const GROW_PER_APPLE = 5;
+const YELLOW_GROW_MULT = 5;
 const SNAKE_RADIUS = 9;
 const APPLE_RADIUS = 8;
 const SELF_SAFE_SEGMENTS = 10;
 const MAX_PLAYERS = 4;
 const MIN_PLAYERS = 2;
 const COUNTDOWN_MS = 5000;
-const APPLE_COUNT = 8;
+const APPLE_COUNT = 10;
+const SCORE_TO_WIN = 50;
+const BLUE_BOOST_MS = 10000;
+const BLUE_SPEED_MULT = 2;
+
+const APPLE_TYPES = {
+  red: { points: 1, grow: GROW_PER_APPLE, weight: 60 },
+  yellow: { points: 3, grow: GROW_PER_APPLE * YELLOW_GROW_MULT, weight: 25 },
+  blue: { points: 2, grow: GROW_PER_APPLE, weight: 15, boostMs: BLUE_BOOST_MS },
+};
 
 const COLORS = ['#4ade80', '#60a5fa', '#f472b6', '#fbbf24'];
 
@@ -127,8 +137,11 @@ function buildState(forPlayerId) {
       color: pl.color,
       angle: pl.angle,
       snake: pl.snake,
+      boosted: pl.boostUntil > Date.now(),
+      boostRemaining: Math.max(0, (pl.boostUntil || 0) - Date.now()),
     })),
     apples: game.apples,
+    scoreToWin: SCORE_TO_WIN,
   };
 }
 
@@ -136,11 +149,24 @@ function broadcastState() {
   for (const [id] of game.players) sendState(id);
 }
 
+function pickAppleKind() {
+  const entries = Object.entries(APPLE_TYPES);
+  const total = entries.reduce((sum, [, t]) => sum + t.weight, 0);
+  let roll = Math.random() * total;
+  for (const [kind, t] of entries) {
+    roll -= t.weight;
+    if (roll <= 0) return kind;
+  }
+  return 'red';
+}
+
 function spawnApple() {
+  const kind = pickAppleKind();
   for (let attempt = 0; attempt < 40; attempt++) {
     const apple = {
       x: Math.random() * WORLD_W,
       y: Math.random() * WORLD_H,
+      kind,
     };
     let clear = true;
     for (const [, p] of game.players) {
@@ -161,6 +187,7 @@ function spawnApple() {
   game.apples.push({
     x: Math.random() * WORLD_W,
     y: Math.random() * WORLD_H,
+    kind,
   });
 }
 
@@ -200,6 +227,7 @@ function startGame() {
     p.angle = slot.angle;
     p.targetAngle = slot.angle;
     p.targetLength = BASE_SEGMENTS * SEGMENT_SPACING;
+    p.boostUntil = 0;
     p.snake = buildSnake(slot.x, slot.y, slot.angle, BASE_SEGMENTS);
   });
 
@@ -237,16 +265,28 @@ function killPlayer(p) {
   p.alive = false;
 }
 
+function endGame(winnerId) {
+  if (game.tickTimer) {
+    clearInterval(game.tickTimer);
+    game.tickTimer = null;
+  }
+  game.status = 'ended';
+  game.winner = winnerId;
+  broadcastState();
+}
+
 function checkGameOver() {
+  const scored = [...game.players.values()]
+    .filter((p) => p.ready)
+    .find((p) => p.score >= SCORE_TO_WIN);
+  if (scored) {
+    endGame(scored.id);
+    return true;
+  }
+
   const alive = [...game.players.values()].filter((p) => p.ready && p.alive);
   if (alive.length <= 1) {
-    if (game.tickTimer) {
-      clearInterval(game.tickTimer);
-      game.tickTimer = null;
-    }
-    game.status = 'ended';
-    game.winner = alive[0] ? alive[0].id : null;
-    broadcastState();
+    endGame(alive[0] ? alive[0].id : null);
     return true;
   }
   return false;
@@ -273,9 +313,11 @@ function gameTick() {
     if (!p.alive || p.snake.length === 0) continue;
 
     p.angle = turnToward(p.angle, p.targetAngle, TURN_RATE);
+    const boosted = p.boostUntil > Date.now();
+    const speed = SPEED * (boosted ? BLUE_SPEED_MULT : 1);
     const head = p.snake[0];
-    const nx = wrap(head.x + Math.cos(p.angle) * SPEED, WORLD_W);
-    const ny = wrap(head.y + Math.sin(p.angle) * SPEED, WORLD_H);
+    const nx = wrap(head.x + Math.cos(p.angle) * speed, WORLD_W);
+    const ny = wrap(head.y + Math.sin(p.angle) * speed, WORLD_H);
     p.snake.unshift({ x: nx, y: ny });
     trimSnake(p.snake, p.targetLength);
   }
@@ -286,8 +328,13 @@ function gameTick() {
 
     game.apples = game.apples.filter((a) => {
       if (distWrapped(head.x, head.y, a.x, a.y) < SNAKE_RADIUS + APPLE_RADIUS) {
-        p.score += 1;
-        p.targetLength += GROW_PER_APPLE * SEGMENT_SPACING;
+        const kind = a.kind && APPLE_TYPES[a.kind] ? a.kind : 'red';
+        const info = APPLE_TYPES[kind];
+        p.score += info.points;
+        p.targetLength += info.grow * SEGMENT_SPACING;
+        if (info.boostMs) {
+          p.boostUntil = Math.max(p.boostUntil || 0, Date.now()) + info.boostMs;
+        }
         spawnApple();
         return false;
       }
@@ -329,6 +376,7 @@ function resetToLobby() {
     p.angle = 0;
     p.targetAngle = 0;
     p.targetLength = BASE_SEGMENTS * SEGMENT_SPACING;
+    p.boostUntil = 0;
   }
   game.status = 'lobby';
   game.countdownEnd = null;
@@ -366,6 +414,7 @@ wss.on('connection', (ws) => {
     angle: 0,
     targetAngle: 0,
     targetLength: BASE_SEGMENTS * SEGMENT_SPACING,
+    boostUntil: 0,
     color,
   };
 

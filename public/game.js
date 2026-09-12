@@ -307,7 +307,13 @@ function renderLobby() {
 
 function renderGame() {
   const me = state.players.find((p) => p.id === myId);
-  hudScore.textContent = me ? `${me.name || 'You'} · ${me.score}` : '';
+  const goal = state.scoreToWin || 50;
+  let scoreText = me ? `${me.name || 'You'} · ${me.score}/${goal}` : '';
+  if (me?.boosted) {
+    const secs = Math.ceil((me.boostRemaining || 0) / 1000);
+    scoreText += ` · BOOST ${secs}s`;
+  }
+  hudScore.textContent = scoreText;
   hudStatus.textContent = me?.alive === false ? 'You died!' : '';
   resizeCanvas();
   drawBoard();
@@ -348,13 +354,24 @@ function drawBoard() {
   }
 
   const appleR = (state.appleRadius || 8) * scale;
+  const appleColors = {
+    red: '#ef4444',
+    yellow: '#facc15',
+    blue: '#3b82f6',
+  };
   for (const apple of state.apples) {
     const p = toScreen(apple.x, apple.y);
-    ctx.fillStyle = '#ef4444';
+    const kind = apple.kind || 'red';
+    ctx.fillStyle = appleColors[kind] || appleColors.red;
     ctx.beginPath();
-    ctx.arc(p.x, p.y, appleR, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, appleR * (kind === 'yellow' ? 1.15 : 1), 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = '#86efac';
+    if (kind === 'blue') {
+      ctx.strokeStyle = '#93c5fd';
+      ctx.lineWidth = Math.max(1, scale * 1.5);
+      ctx.stroke();
+    }
+    ctx.fillStyle = kind === 'yellow' ? '#854d0e' : '#86efac';
     ctx.beginPath();
     ctx.arc(p.x + appleR * 0.25, p.y - appleR * 0.55, appleR * 0.28, 0, Math.PI * 2);
     ctx.fill();
@@ -378,9 +395,14 @@ function drawSnake(p) {
     const pos = toScreen(seg.x, seg.y);
     const t = 1 - i / p.snake.length;
     ctx.fillStyle = p.color;
+    if (p.boosted) {
+      ctx.shadowColor = '#60a5fa';
+      ctx.shadowBlur = r * 1.2;
+    }
     ctx.beginPath();
     ctx.arc(pos.x, pos.y, r * (0.75 + t * 0.25), 0, Math.PI * 2);
     ctx.fill();
+    ctx.shadowBlur = 0;
   }
 
   const head = p.snake[0];
