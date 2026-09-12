@@ -102,32 +102,50 @@ playAgainBtn.addEventListener('click', () => {
   readyBtn.classList.remove('is-ready');
 });
 
-document.querySelectorAll('.ctrl-btn').forEach((btn) => {
-  btn.addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    sendDirection(btn.dataset.dir);
-  });
-  btn.addEventListener('click', () => sendDirection(btn.dataset.dir));
-});
-
+// Swipe steering: fire as soon as movement crosses threshold (not on finger lift)
+const SWIPE_MIN = 14;
 let touchStartX = 0;
 let touchStartY = 0;
+let swipeLocked = false;
+let lastSentDir = null;
 
-canvas.addEventListener('touchstart', (e) => {
-  touchStartX = e.touches[0].clientX;
-  touchStartY = e.touches[0].clientY;
-}, { passive: true });
+function onTouchStart(e) {
+  if (state?.status !== 'playing') return;
+  const t = e.touches[0];
+  touchStartX = t.clientX;
+  touchStartY = t.clientY;
+  swipeLocked = false;
+}
 
-canvas.addEventListener('touchend', (e) => {
-  const dx = e.changedTouches[0].clientX - touchStartX;
-  const dy = e.changedTouches[0].clientY - touchStartY;
-  if (Math.abs(dx) < 20 && Math.abs(dy) < 20) return;
-  if (Math.abs(dx) > Math.abs(dy)) {
-    sendDirection(dx > 0 ? 'right' : 'left');
-  } else {
-    sendDirection(dy > 0 ? 'down' : 'up');
-  }
-}, { passive: true });
+function onTouchMove(e) {
+  if (state?.status !== 'playing' || swipeLocked) return;
+  if (e.cancelable) e.preventDefault();
+  const t = e.touches[0];
+  const dx = t.clientX - touchStartX;
+  const dy = t.clientY - touchStartY;
+  if (Math.abs(dx) < SWIPE_MIN && Math.abs(dy) < SWIPE_MIN) return;
+
+  const dir = Math.abs(dx) > Math.abs(dy)
+    ? (dx > 0 ? 'right' : 'left')
+    : (dy > 0 ? 'down' : 'up');
+
+  swipeLocked = true;
+  sendDirection(dir);
+  // Allow a new swipe from the current point without lifting
+  touchStartX = t.clientX;
+  touchStartY = t.clientY;
+  swipeLocked = false;
+}
+
+function onTouchEnd() {
+  swipeLocked = false;
+}
+
+const swipeTarget = document.getElementById('gameScreen');
+swipeTarget.addEventListener('touchstart', onTouchStart, { passive: true });
+swipeTarget.addEventListener('touchmove', onTouchMove, { passive: false });
+swipeTarget.addEventListener('touchend', onTouchEnd, { passive: true });
+swipeTarget.addEventListener('touchcancel', onTouchEnd, { passive: true });
 
 document.addEventListener('keydown', (e) => {
   const map = {
@@ -142,7 +160,11 @@ document.addEventListener('keydown', (e) => {
 
 function sendDirection(dir) {
   if (state?.status !== 'playing') return;
-  ws.send(JSON.stringify({ type: 'direction', dir }));
+  if (dir === lastSentDir) return;
+  lastSentDir = dir;
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'direction', dir }));
+  }
 }
 
 ws.onmessage = (e) => {
@@ -234,13 +256,18 @@ function renderGame() {
 
 function resizeCanvas() {
   const maxW = window.innerWidth;
-  const maxH = window.innerHeight - 160;
+  const maxH = window.innerHeight - 56;
   const cell = Math.max(8, Math.floor(Math.min(maxW / state.gridW, maxH / state.gridH)));
+  const w = state.gridW * cell;
+  const h = state.gridH * cell;
 
-  canvas.width = state.gridW * cell;
-  canvas.height = state.gridH * cell;
-  canvas.style.width = `${canvas.width}px`;
-  canvas.style.height = `${canvas.height}px`;
+  // Avoid resetting canvas every tick — that causes mobile lag
+  if (canvas.width === w && canvas.height === h && canvas._cell === cell) return;
+
+  canvas.width = w;
+  canvas.height = h;
+  canvas.style.width = `${w}px`;
+  canvas.style.height = `${h}px`;
   canvas._cell = cell;
 }
 
@@ -249,23 +276,18 @@ function drawBoard() {
   ctx.fillStyle = '#0f172a';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Visible wall border
-  ctx.strokeStyle = '#64748b';
-  ctx.lineWidth = Math.max(2, cell * 0.2);
-  ctx.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
-
   ctx.strokeStyle = '#1e293b';
   ctx.lineWidth = 1;
   for (let x = 0; x <= state.gridW; x++) {
     ctx.beginPath();
-    ctx.moveTo(x * cell, 0);
-    ctx.lineTo(x * cell, canvas.height);
+    ctx.moveTo(x * cell + 0.5, 0);
+    ctx.lineTo(x * cell + 0.5, canvas.height);
     ctx.stroke();
   }
   for (let y = 0; y <= state.gridH; y++) {
     ctx.beginPath();
-    ctx.moveTo(0, y * cell);
-    ctx.lineTo(canvas.width, y * cell);
+    ctx.moveTo(0, y * cell + 0.5);
+    ctx.lineTo(canvas.width, y * cell + 0.5);
     ctx.stroke();
   }
 

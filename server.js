@@ -7,7 +7,7 @@ const os = require('os');
 const PORT = process.env.PORT || 3000;
 const GRID_W = 28;
 const GRID_H = 40;
-const TICK_MS = 120;
+const TICK_MS = 100;
 const MAX_PLAYERS = 4;
 const MIN_PLAYERS = 2;
 const COUNTDOWN_MS = 10000;
@@ -228,10 +228,10 @@ function gameTick() {
   for (const [id, p] of game.players) {
     if (!p.alive) continue;
     const head = p.snake[0];
-    newHeads.set(id, {
-      x: head.x + p.direction.x,
-      y: head.y + p.direction.y,
-    });
+    // Wrap through walls
+    const x = ((head.x + p.direction.x) % GRID_W + GRID_W) % GRID_W;
+    const y = ((head.y + p.direction.y) % GRID_H + GRID_H) % GRID_H;
+    newHeads.set(id, { x, y });
   }
 
   // Cells that stay occupied after this tick (exclude vacating tails when not eating)
@@ -259,13 +259,6 @@ function gameTick() {
   for (const [id, p] of game.players) {
     if (!p.alive) continue;
     const nh = newHeads.get(id);
-
-    // Walls — hard bounds, no wrapping
-    if (nh.x < 0 || nh.x >= GRID_W || nh.y < 0 || nh.y >= GRID_H) {
-      killPlayer(p);
-      continue;
-    }
-
     const key = `${nh.x},${nh.y}`;
 
     // Body / other snake / self (any remaining body segment)
@@ -396,7 +389,7 @@ wss.on('connection', (ws) => {
       };
       const nd = dirs[msg.dir];
       if (!nd) return;
-      const cur = p.direction;
+      const cur = p.nextDirection;
       if (cur.x + nd.x === 0 && cur.y + nd.y === 0) return;
       p.nextDirection = nd;
     }

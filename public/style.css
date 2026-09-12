@@ -194,6 +194,9 @@ h1 {
 #gameScreen {
   padding: 0;
   justify-content: flex-start;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .hud {
@@ -212,39 +215,15 @@ h1 {
   margin: 0 auto;
   background: #0f172a;
   max-width: 100%;
+  touch-action: none;
 }
 
-.controls {
+.swipe-hint {
   flex-shrink: 0;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  width: 100%;
-  max-width: 280px;
-  margin: 0 auto;
-}
-
-.ctrl-row {
-  display: flex;
-  gap: 4px;
-}
-
-.ctrl-btn {
-  width: 72px;
-  height: 72px;
-  font-size: 1.5rem;
-  border: none;
-  border-radius: 12px;
-  background: #1e293b;
-  color: #e2e8f0;
-  cursor: pointer;
-  user-select: none;
-}
-
-.ctrl-btn:active {
-  background: #334155;
+  text-align: center;
+  color: #64748b;
+  font-size: 0.8rem;
+  padding: 10px 0 16px;
 }
 
 /* Overlay */
@@ -289,8 +268,7 @@ h1 {
 }
 
 @media (min-height: 700px) {
-  .ctrl-btn {
-    width: 80px;
-    height: 80px;
+  .swipe-hint {
+    padding-bottom: 24px;
   }
 }
