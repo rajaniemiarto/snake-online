@@ -5,12 +5,21 @@ const path = require('path');
 const os = require('os');
 
 const PORT = process.env.PORT || 3000;
-const GRID_W = 28;
-const GRID_H = 40;
-const TICK_MS = 100;
+const WORLD_W = 900;
+const WORLD_H = 1400;
+const TICK_MS = 50;
+const SPEED = 3.4;
+const TURN_RATE = 0.14;
+const SEGMENT_SPACING = 6;
+const BASE_SEGMENTS = 14;
+const GROW_PER_APPLE = 5;
+const SNAKE_RADIUS = 9;
+const APPLE_RADIUS = 8;
+const SELF_SAFE_SEGMENTS = 10;
 const MAX_PLAYERS = 4;
 const MIN_PLAYERS = 2;
 const COUNTDOWN_MS = 5000;
+const APPLE_COUNT = 8;
 
 const COLORS = ['#4ade80', '#60a5fa', '#f472b6', '#fbbf24'];
 
@@ -49,20 +58,34 @@ function getShareUrl() {
   return `http://${getLocalIp()}:${PORT}`;
 }
 
-function broadcast(msg, excludeId) {
-  const data = JSON.stringify(msg);
-  for (const [id, p] of game.players) {
-    if (id !== excludeId && p.ws.readyState === WebSocket.OPEN) {
-      p.ws.send(data);
-    }
-  }
+function wrap(v, max) {
+  return ((v % max) + max) % max;
 }
 
-function broadcastAll(msg) {
-  const data = JSON.stringify(msg);
-  for (const [, p] of game.players) {
-    if (p.ws.readyState === WebSocket.OPEN) p.ws.send(data);
-  }
+function wrapDelta(a, b, max) {
+  let d = a - b;
+  if (d > max / 2) d -= max;
+  if (d < -max / 2) d += max;
+  return d;
+}
+
+function distWrapped(ax, ay, bx, by) {
+  const dx = wrapDelta(ax, bx, WORLD_W);
+  const dy = wrapDelta(ay, by, WORLD_H);
+  return Math.hypot(dx, dy);
+}
+
+function normalizeAngle(a) {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
+
+function turnToward(current, target, maxStep) {
+  let diff = normalizeAngle(target - current);
+  if (diff > maxStep) diff = maxStep;
+  if (diff < -maxStep) diff = -maxStep;
+  return normalizeAngle(current + diff);
 }
 
 function sendState(playerId) {
@@ -83,8 +106,10 @@ function buildState(forPlayerId) {
   return {
     type: 'state',
     status: game.status,
-    gridW: GRID_W,
-    gridH: GRID_H,
+    worldW: WORLD_W,
+    worldH: WORLD_H,
+    snakeRadius: SNAKE_RADIUS,
+    appleRadius: APPLE_RADIUS,
     you: forPlayerId,
     readyCount,
     maxPlayers: MAX_PLAYERS,
@@ -100,6 +125,7 @@ function buildState(forPlayerId) {
       alive: pl.alive,
       score: pl.score,
       color: pl.color,
+      angle: pl.angle,
       snake: pl.snake,
     })),
     apples: game.apples,
@@ -110,41 +136,51 @@ function broadcastState() {
   for (const [id] of game.players) sendState(id);
 }
 
-function occupiedCells(excludeId) {
-  const cells = new Set();
-  for (const [id, p] of game.players) {
-    if (id === excludeId) continue;
-    for (const seg of p.snake) cells.add(`${seg.x},${seg.y}`);
-  }
-  return cells;
-}
-
-function allOccupied() {
-  const cells = new Set();
-  for (const [, p] of game.players) {
-    for (const seg of p.snake) cells.add(`${seg.x},${seg.y}`);
-  }
-  return cells;
-}
-
 function spawnApple() {
-  const occupied = allOccupied();
-  const free = [];
-  for (let y = 0; y < GRID_H; y++) {
-    for (let x = 0; x < GRID_W; x++) {
-      if (!occupied.has(`${x},${y}`)) free.push({ x, y });
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const apple = {
+      x: Math.random() * WORLD_W,
+      y: Math.random() * WORLD_H,
+    };
+    let clear = true;
+    for (const [, p] of game.players) {
+      if (!p.alive) continue;
+      for (const seg of p.snake) {
+        if (distWrapped(apple.x, apple.y, seg.x, seg.y) < SNAKE_RADIUS * 2.5) {
+          clear = false;
+          break;
+        }
+      }
+      if (!clear) break;
+    }
+    if (clear) {
+      game.apples.push(apple);
+      return;
     }
   }
-  if (free.length === 0) return;
-  game.apples.push(free[Math.floor(Math.random() * free.length)]);
+  game.apples.push({
+    x: Math.random() * WORLD_W,
+    y: Math.random() * WORLD_H,
+  });
+}
+
+function buildSnake(x, y, angle, segments) {
+  const snake = [];
+  for (let i = 0; i < segments; i++) {
+    snake.push({
+      x: wrap(x - Math.cos(angle) * i * SEGMENT_SPACING, WORLD_W),
+      y: wrap(y - Math.sin(angle) * i * SEGMENT_SPACING, WORLD_H),
+    });
+  }
+  return snake;
 }
 
 function startPositions(count) {
   const slots = [
-    { head: { x: 5, y: 5 }, dir: { x: 1, y: 0 } },
-    { head: { x: GRID_W - 6, y: 5 }, dir: { x: -1, y: 0 } },
-    { head: { x: 5, y: GRID_H - 6 }, dir: { x: 1, y: 0 } },
-    { head: { x: GRID_W - 6, y: GRID_H - 6 }, dir: { x: -1, y: 0 } },
+    { x: WORLD_W * 0.2, y: WORLD_H * 0.2, angle: 0 },
+    { x: WORLD_W * 0.8, y: WORLD_H * 0.2, angle: Math.PI },
+    { x: WORLD_W * 0.2, y: WORLD_H * 0.8, angle: 0 },
+    { x: WORLD_W * 0.8, y: WORLD_H * 0.8, angle: Math.PI },
   ];
   return slots.slice(0, count);
 }
@@ -161,12 +197,13 @@ function startGame() {
     const slot = positions[i];
     p.alive = true;
     p.score = 0;
-    p.snake = [slot.head, { x: slot.head.x - slot.dir.x, y: slot.head.y - slot.dir.y }];
-    p.direction = { ...slot.dir };
-    p.nextDirection = { ...slot.dir };
+    p.angle = slot.angle;
+    p.targetAngle = slot.angle;
+    p.targetLength = BASE_SEGMENTS * SEGMENT_SPACING;
+    p.snake = buildSnake(slot.x, slot.y, slot.angle, BASE_SEGMENTS);
   });
 
-  for (let i = 0; i < 3; i++) spawnApple();
+  for (let i = 0; i < APPLE_COUNT; i++) spawnApple();
 
   if (game.tickTimer) clearInterval(game.tickTimer);
   game.tickTimer = setInterval(gameTick, TICK_MS);
@@ -215,84 +252,64 @@ function checkGameOver() {
   return false;
 }
 
-function willEat(p, nh) {
-  return game.apples.some((a) => a.x === nh.x && a.y === nh.y);
+function pathLength(snake) {
+  let len = 0;
+  for (let i = 1; i < snake.length; i++) {
+    len += distWrapped(snake[i].x, snake[i].y, snake[i - 1].x, snake[i - 1].y);
+  }
+  return len;
+}
+
+function trimSnake(snake, targetLen) {
+  while (snake.length > 2 && pathLength(snake) > targetLen) {
+    snake.pop();
+  }
 }
 
 function gameTick() {
   if (game.status !== 'playing') return;
 
   for (const [, p] of game.players) {
-    if (!p.alive) continue;
-    p.direction = { ...p.nextDirection };
-  }
+    if (!p.alive || p.snake.length === 0) continue;
 
-  const newHeads = new Map();
-  for (const [id, p] of game.players) {
-    if (!p.alive) continue;
+    p.angle = turnToward(p.angle, p.targetAngle, TURN_RATE);
     const head = p.snake[0];
-    // Wrap through walls
-    const x = ((head.x + p.direction.x) % GRID_W + GRID_W) % GRID_W;
-    const y = ((head.y + p.direction.y) % GRID_H + GRID_H) % GRID_H;
-    newHeads.set(id, { x, y });
+    const nx = wrap(head.x + Math.cos(p.angle) * SPEED, WORLD_W);
+    const ny = wrap(head.y + Math.sin(p.angle) * SPEED, WORLD_H);
+    p.snake.unshift({ x: nx, y: ny });
+    trimSnake(p.snake, p.targetLength);
   }
 
-  // Cells that stay occupied after this tick (exclude vacating tails when not eating)
-  const blocked = new Set();
-  for (const [id, p] of game.players) {
-    if (!p.alive) continue;
-    const nh = newHeads.get(id);
-    const eating = willEat(p, nh);
-    const last = eating ? p.snake.length : p.snake.length - 1;
-    for (let i = 0; i < last; i++) {
-      blocked.add(`${p.snake[i].x},${p.snake[i].y}`);
-    }
-  }
+  for (const [, p] of game.players) {
+    if (!p.alive || p.snake.length === 0) continue;
+    const head = p.snake[0];
 
-  // Head-on / same-cell collisions between snakes
-  const headCounts = new Map();
-  for (const [id, nh] of newHeads) {
-    const p = game.players.get(id);
-    if (!p?.alive) continue;
-    const key = `${nh.x},${nh.y}`;
-    if (!headCounts.has(key)) headCounts.set(key, []);
-    headCounts.get(key).push(id);
-  }
-
-  for (const [id, p] of game.players) {
-    if (!p.alive) continue;
-    const nh = newHeads.get(id);
-    const key = `${nh.x},${nh.y}`;
-
-    // Body / other snake / self (any remaining body segment)
-    if (blocked.has(key)) {
-      killPlayer(p);
-      continue;
-    }
-
-    // Two heads into the same cell
-    if ((headCounts.get(key) || []).length > 1) {
-      killPlayer(p);
-    }
-  }
-
-  for (const [id, p] of game.players) {
-    if (!p.alive) continue;
-    const nh = newHeads.get(id);
-    p.snake.unshift(nh);
-
-    let ate = false;
     game.apples = game.apples.filter((a) => {
-      if (a.x === nh.x && a.y === nh.y) {
-        ate = true;
+      if (distWrapped(head.x, head.y, a.x, a.y) < SNAKE_RADIUS + APPLE_RADIUS) {
         p.score += 1;
+        p.targetLength += GROW_PER_APPLE * SEGMENT_SPACING;
+        spawnApple();
         return false;
       }
       return true;
     });
+  }
 
-    if (!ate) p.snake.pop();
-    else spawnApple();
+  for (const [id, p] of game.players) {
+    if (!p.alive || p.snake.length === 0) continue;
+    const head = p.snake[0];
+
+    outer: for (const [oid, op] of game.players) {
+      if (!op.alive) continue;
+      const start = oid === id ? SELF_SAFE_SEGMENTS : 0;
+      for (let i = start; i < op.snake.length; i++) {
+        const seg = op.snake[i];
+        if (distWrapped(head.x, head.y, seg.x, seg.y) < SNAKE_RADIUS * 1.7) {
+          killPlayer(p);
+          break outer;
+        }
+      }
+    }
   }
 
   if (checkGameOver()) return;
@@ -309,6 +326,9 @@ function resetToLobby() {
     p.alive = false;
     p.snake = [];
     p.score = 0;
+    p.angle = 0;
+    p.targetAngle = 0;
+    p.targetLength = BASE_SEGMENTS * SEGMENT_SPACING;
   }
   game.status = 'lobby';
   game.countdownEnd = null;
@@ -343,8 +363,9 @@ wss.on('connection', (ws) => {
     alive: false,
     score: 0,
     snake: [],
-    direction: { x: 1, y: 0 },
-    nextDirection: { x: 1, y: 0 },
+    angle: 0,
+    targetAngle: 0,
+    targetLength: BASE_SEGMENTS * SEGMENT_SPACING,
     color,
   };
 
@@ -383,18 +404,10 @@ wss.on('connection', (ws) => {
       broadcastState();
     }
 
-    if (msg.type === 'direction' && game.status === 'playing' && p.alive) {
-      const dirs = {
-        up: { x: 0, y: -1 },
-        down: { x: 0, y: 1 },
-        left: { x: -1, y: 0 },
-        right: { x: 1, y: 0 },
-      };
-      const nd = dirs[msg.dir];
-      if (!nd) return;
-      const cur = p.nextDirection;
-      if (cur.x + nd.x === 0 && cur.y + nd.y === 0) return;
-      p.nextDirection = nd;
+    if (msg.type === 'aim' && game.status === 'playing' && p.alive) {
+      if (typeof msg.angle === 'number' && Number.isFinite(msg.angle)) {
+        p.targetAngle = normalizeAngle(msg.angle);
+      }
     }
 
     if (msg.type === 'playAgain' && game.status === 'ended') {

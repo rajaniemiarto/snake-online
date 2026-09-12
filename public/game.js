@@ -25,6 +25,13 @@ const countdownBanner = document.getElementById('countdownBanner');
 const countdownNumber = document.getElementById('countdownNumber');
 
 let countdownTimer = null;
+let scale = 1;
+let aiming = false;
+let joyOriginX = 0;
+let joyOriginY = 0;
+let joyDX = 0;
+let joyDY = 0;
+let lastAimSent = 0;
 
 shareUrl.textContent = location.origin;
 
@@ -51,7 +58,6 @@ function isLocalUrl(url) {
 }
 
 function setShareLink(fromServer) {
-  // Prefer a public URL (Render / tunnel). Never show LAN IP if a public page URL exists.
   if (fromServer && !isLocalUrl(fromServer)) {
     shareUrl.textContent = fromServer;
     return;
@@ -74,7 +80,6 @@ nameInput.addEventListener('input', () => {
   nameInput.classList.toggle('invalid', !nameInput.value.trim());
   sendName();
 });
-
 nameInput.addEventListener('change', sendName);
 nameInput.addEventListener('blur', sendName);
 
@@ -106,70 +111,90 @@ playAgainBtn.addEventListener('click', () => {
   readyBtn.classList.remove('is-ready');
 });
 
-// Swipe steering: fire as soon as movement crosses threshold (not on finger lift)
-const SWIPE_MIN = 14;
-let touchStartX = 0;
-let touchStartY = 0;
-let swipeLocked = false;
-let lastSentDir = null;
-
-function onTouchStart(e) {
-  if (state?.status !== 'playing') return;
-  const t = e.touches[0];
-  touchStartX = t.clientX;
-  touchStartY = t.clientY;
-  swipeLocked = false;
+function sendAim(angle) {
+  if (state?.status !== 'playing' || ws.readyState !== WebSocket.OPEN) return;
+  const now = performance.now();
+  if (now - lastAimSent < 32) return;
+  lastAimSent = now;
+  ws.send(JSON.stringify({ type: 'aim', angle }));
 }
 
-function onTouchMove(e) {
-  if (state?.status !== 'playing' || swipeLocked) return;
+function updateAimFromJoystick(clientX, clientY) {
+  joyDX = clientX - joyOriginX;
+  joyDY = clientY - joyOriginY;
+  if (Math.hypot(joyDX, joyDY) < 8) return;
+  sendAim(Math.atan2(joyDY, joyDX));
+}
+
+const steerTarget = document.getElementById('gameScreen');
+
+steerTarget.addEventListener('touchstart', (e) => {
+  if (state?.status !== 'playing') return;
+  const t = e.touches[0];
+  aiming = true;
+  joyOriginX = t.clientX;
+  joyOriginY = t.clientY;
+  joyDX = 0;
+  joyDY = 0;
+}, { passive: true });
+
+steerTarget.addEventListener('touchmove', (e) => {
+  if (!aiming || state?.status !== 'playing') return;
   if (e.cancelable) e.preventDefault();
   const t = e.touches[0];
-  const dx = t.clientX - touchStartX;
-  const dy = t.clientY - touchStartY;
-  if (Math.abs(dx) < SWIPE_MIN && Math.abs(dy) < SWIPE_MIN) return;
+  updateAimFromJoystick(t.clientX, t.clientY);
+}, { passive: false });
 
-  const dir = Math.abs(dx) > Math.abs(dy)
-    ? (dx > 0 ? 'right' : 'left')
-    : (dy > 0 ? 'down' : 'up');
+steerTarget.addEventListener('touchend', () => {
+  aiming = false;
+  joyDX = 0;
+  joyDY = 0;
+}, { passive: true });
 
-  swipeLocked = true;
-  sendDirection(dir);
-  // Allow a new swipe from the current point without lifting
-  touchStartX = t.clientX;
-  touchStartY = t.clientY;
-  swipeLocked = false;
-}
+steerTarget.addEventListener('touchcancel', () => {
+  aiming = false;
+  joyDX = 0;
+  joyDY = 0;
+}, { passive: true });
 
-function onTouchEnd() {
-  swipeLocked = false;
-}
-
-const swipeTarget = document.getElementById('gameScreen');
-swipeTarget.addEventListener('touchstart', onTouchStart, { passive: true });
-swipeTarget.addEventListener('touchmove', onTouchMove, { passive: false });
-swipeTarget.addEventListener('touchend', onTouchEnd, { passive: true });
-swipeTarget.addEventListener('touchcancel', onTouchEnd, { passive: true });
-
-document.addEventListener('keydown', (e) => {
-  const map = {
-    ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
-    w: 'up', s: 'down', a: 'left', d: 'right',
-  };
-  if (map[e.key]) {
-    e.preventDefault();
-    sendDirection(map[e.key]);
-  }
+steerTarget.addEventListener('mousedown', (e) => {
+  if (state?.status !== 'playing') return;
+  aiming = true;
+  joyOriginX = e.clientX;
+  joyOriginY = e.clientY;
+  joyDX = 0;
+  joyDY = 0;
 });
 
-function sendDirection(dir) {
+window.addEventListener('mousemove', (e) => {
+  if (!aiming || state?.status !== 'playing') return;
+  updateAimFromJoystick(e.clientX, e.clientY);
+});
+
+window.addEventListener('mouseup', () => {
+  aiming = false;
+  joyDX = 0;
+  joyDY = 0;
+});
+
+document.addEventListener('keydown', (e) => {
   if (state?.status !== 'playing') return;
-  if (dir === lastSentDir) return;
-  lastSentDir = dir;
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'direction', dir }));
+  const map = {
+    ArrowUp: -Math.PI / 2,
+    w: -Math.PI / 2,
+    ArrowDown: Math.PI / 2,
+    s: Math.PI / 2,
+    ArrowLeft: Math.PI,
+    a: Math.PI,
+    ArrowRight: 0,
+    d: 0,
+  };
+  if (map[e.key] !== undefined) {
+    e.preventDefault();
+    lastAimSent = 0;
+    sendAim(map[e.key]);
   }
-}
+});
 
 ws.onmessage = (e) => {
   const msg = JSON.parse(e.data);
@@ -241,8 +266,8 @@ function updateCountdownDisplay() {
   countdownNumber.textContent = String(secs);
   countdownBanner.classList.remove('hidden');
   lobbyStatus.textContent = secs > 0
-    ? `Get ready! Others can still join`
-    : `Starting…`;
+    ? 'Get ready! Others can still join'
+    : 'Starting…';
   lobbyStatus.className = 'lobby-status countdown';
 }
 
@@ -284,7 +309,6 @@ function renderGame() {
   const me = state.players.find((p) => p.id === myId);
   hudScore.textContent = me ? `${me.name || 'You'} · ${me.score}` : '';
   hudStatus.textContent = me?.alive === false ? 'You died!' : '';
-
   resizeCanvas();
   drawBoard();
 }
@@ -292,132 +316,153 @@ function renderGame() {
 function resizeCanvas() {
   const maxW = window.innerWidth;
   const maxH = window.innerHeight - 56;
-  const cell = Math.max(8, Math.floor(Math.min(maxW / state.gridW, maxH / state.gridH)));
-  const w = state.gridW * cell;
-  const h = state.gridH * cell;
+  const s = Math.min(maxW / state.worldW, maxH / state.worldH);
+  const w = Math.floor(state.worldW * s);
+  const h = Math.floor(state.worldH * s);
+  scale = s;
 
-  // Avoid resetting canvas every tick — that causes mobile lag
-  if (canvas.width === w && canvas.height === h && canvas._cell === cell) return;
-
+  if (canvas.width === w && canvas.height === h) return;
   canvas.width = w;
   canvas.height = h;
   canvas.style.width = `${w}px`;
   canvas.style.height = `${h}px`;
-  canvas._cell = cell;
+}
+
+function toScreen(x, y) {
+  return { x: x * scale, y: y * scale };
 }
 
 function drawBoard() {
-  const cell = canvas._cell || 16;
-  ctx.fillStyle = '#0f172a';
+  ctx.fillStyle = '#0b1220';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  ctx.strokeStyle = '#1e293b';
-  ctx.lineWidth = 1;
-  for (let x = 0; x <= state.gridW; x++) {
-    ctx.beginPath();
-    ctx.moveTo(x * cell + 0.5, 0);
-    ctx.lineTo(x * cell + 0.5, canvas.height);
-    ctx.stroke();
-  }
-  for (let y = 0; y <= state.gridH; y++) {
-    ctx.beginPath();
-    ctx.moveTo(0, y * cell + 0.5);
-    ctx.lineTo(canvas.width, y * cell + 0.5);
-    ctx.stroke();
+  // Soft ambient dots instead of a grid
+  ctx.fillStyle = '#152033';
+  const step = 40 * scale;
+  for (let y = step / 2; y < canvas.height; y += step) {
+    for (let x = step / 2; x < canvas.width; x += step) {
+      ctx.beginPath();
+      ctx.arc(x, y, Math.max(1, scale * 1.2), 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
+  const appleR = (state.appleRadius || 8) * scale;
   for (const apple of state.apples) {
+    const p = toScreen(apple.x, apple.y);
     ctx.fillStyle = '#ef4444';
-    const pad = cell * 0.15;
     ctx.beginPath();
-    ctx.arc(
-      apple.x * cell + cell / 2,
-      apple.y * cell + cell / 2,
-      cell / 2 - pad,
-      0,
-      Math.PI * 2
-    );
+    ctx.arc(p.x, p.y, appleR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#86efac';
+    ctx.beginPath();
+    ctx.arc(p.x + appleR * 0.25, p.y - appleR * 0.55, appleR * 0.28, 0, Math.PI * 2);
     ctx.fill();
   }
 
   for (const p of state.players) {
     if (!p.snake || p.snake.length === 0) continue;
-    drawSnake(p, cell);
+    drawSnake(p);
   }
+
+  drawJoystick();
 }
 
-function drawSnake(p, cell) {
+function drawSnake(p) {
   if (!p.alive) ctx.globalAlpha = 0.35;
+  const r = (state.snakeRadius || 9) * scale;
+  const step = Math.max(1, Math.floor(2 / Math.max(scale, 0.01)));
 
-  p.snake.forEach((seg, i) => {
+  for (let i = p.snake.length - 1; i >= 0; i -= step) {
+    const seg = p.snake[i];
+    const pos = toScreen(seg.x, seg.y);
+    const t = 1 - i / p.snake.length;
     ctx.fillStyle = p.color;
-    const pad = i === 0 ? cell * 0.08 : cell * 0.12;
-    const r = Math.max(2, cell * 0.2);
-    roundRect(
-      seg.x * cell + pad,
-      seg.y * cell + pad,
-      cell - pad * 2,
-      cell - pad * 2,
-      r
-    );
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, r * (0.75 + t * 0.25), 0, Math.PI * 2);
     ctx.fill();
+  }
 
-    if (i === 0) {
-      ctx.fillStyle = '#0f172a';
-      const eye = cell * 0.15;
-      ctx.fillRect(seg.x * cell + cell * 0.25, seg.y * cell + cell * 0.28, eye, eye);
-      ctx.fillRect(seg.x * cell + cell * 0.55, seg.y * cell + cell * 0.28, eye, eye);
-    }
-  });
+  const head = p.snake[0];
+  const hp = toScreen(head.x, head.y);
+  const angle = p.angle || 0;
 
-  drawNameOnSnake(p, cell);
+  // Eyes facing movement direction
+  const ex = Math.cos(angle);
+  const ey = Math.sin(angle);
+  const px = -ey;
+  const py = ex;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(hp.x + ex * r * 0.35 + px * r * 0.35, hp.y + ey * r * 0.35 + py * r * 0.35, r * 0.28, 0, Math.PI * 2);
+  ctx.arc(hp.x + ex * r * 0.35 - px * r * 0.35, hp.y + ey * r * 0.35 - py * r * 0.35, r * 0.28, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#0f172a';
+  ctx.beginPath();
+  ctx.arc(hp.x + ex * r * 0.5 + px * r * 0.35, hp.y + ey * r * 0.5 + py * r * 0.35, r * 0.12, 0, Math.PI * 2);
+  ctx.arc(hp.x + ex * r * 0.5 - px * r * 0.35, hp.y + ey * r * 0.5 - py * r * 0.35, r * 0.12, 0, Math.PI * 2);
+  ctx.fill();
+
+  drawNameOnSnake(p);
   ctx.globalAlpha = 1;
 }
 
-function drawNameOnSnake(p, cell) {
+function drawNameOnSnake(p) {
   const name = (p.name || '?').toUpperCase();
-  if (!name || p.snake.length === 0) return;
+  if (!name || !p.snake.length) return;
 
   ctx.save();
-  ctx.font = `bold ${Math.max(9, Math.floor(cell * 0.72))}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#0f172a';
 
-  // Paint letters along the body so the name stays on the worm while it moves
   const chars = name.split('');
-  const spacing = Math.max(1, Math.floor(p.snake.length / chars.length));
+  const spacing = Math.max(1, Math.floor(p.snake.length / (chars.length + 1)));
+  ctx.font = `bold ${Math.max(10, Math.floor((state.snakeRadius || 9) * scale * 1.1))}px sans-serif`;
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
 
   chars.forEach((ch, i) => {
-    const segIndex = Math.min(p.snake.length - 1, 1 + i * spacing);
+    const segIndex = Math.min(p.snake.length - 1, 3 + i * spacing);
     const seg = p.snake[segIndex];
     if (!seg) return;
-    const x = seg.x * cell + cell / 2;
-    const y = seg.y * cell + cell / 2;
-    ctx.fillText(ch, x, y);
+    const pos = toScreen(seg.x, seg.y);
+    ctx.fillText(ch, pos.x, pos.y);
   });
 
-  // Always show full name near the head so it's readable even when short
-  const head = p.snake[0];
-  ctx.font = `bold ${Math.max(10, Math.floor(cell * 0.85))}px sans-serif`;
-  ctx.lineWidth = Math.max(2, cell * 0.12);
-  ctx.strokeStyle = 'rgba(15, 23, 42, 0.85)';
+  const head = toScreen(p.snake[0].x, p.snake[0].y);
+  const r = (state.snakeRadius || 9) * scale;
+  ctx.font = `bold ${Math.max(11, Math.floor(r * 1.4))}px sans-serif`;
+  ctx.lineWidth = Math.max(2, r * 0.18);
+  ctx.strokeStyle = 'rgba(15, 23, 42, 0.9)';
   ctx.fillStyle = '#f8fafc';
-  const labelX = head.x * cell + cell / 2;
-  const labelY = head.y * cell - cell * 0.55;
-  ctx.strokeText(name, labelX, labelY);
-  ctx.fillText(name, labelX, labelY);
+  ctx.strokeText(name, head.x, head.y - r * 1.8);
+  ctx.fillText(name, head.x, head.y - r * 1.8);
   ctx.restore();
 }
 
-function roundRect(x, y, w, h, r) {
+function drawJoystick() {
+  if (!aiming || state?.status !== 'playing') return;
+  const rect = canvas.getBoundingClientRect();
+  const ox = joyOriginX - rect.left;
+  const oy = joyOriginY - rect.top;
+  const maxR = 54;
+  const dist = Math.min(maxR, Math.hypot(joyDX, joyDY));
+  const ang = Math.atan2(joyDY, joyDX);
+  const kx = ox + Math.cos(ang) * dist;
+  const ky = oy + Math.sin(ang) * dist;
+
+  ctx.save();
+  ctx.globalAlpha = 0.35;
+  ctx.strokeStyle = '#e2e8f0';
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
+  ctx.arc(ox, oy, maxR, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha = 0.55;
+  ctx.fillStyle = '#e2e8f0';
+  ctx.beginPath();
+  ctx.arc(kx, ky, 18, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }
 
 function renderGameOver() {
