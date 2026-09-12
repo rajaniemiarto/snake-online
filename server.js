@@ -10,7 +10,7 @@ const GRID_H = 40;
 const TICK_MS = 100;
 const MAX_PLAYERS = 4;
 const MIN_PLAYERS = 2;
-const COUNTDOWN_MS = 10000;
+const COUNTDOWN_MS = 5000;
 
 const COLORS = ['#4ade80', '#60a5fa', '#f472b6', '#fbbf24'];
 
@@ -74,7 +74,9 @@ function sendState(playerId) {
 function buildState(forPlayerId) {
   const readyCount = [...game.players.values()].filter((p) => p.ready).length;
   let countdownRemaining = 0;
+  let countdownEnd = null;
   if (game.status === 'countdown' && game.countdownEnd) {
+    countdownEnd = game.countdownEnd;
     countdownRemaining = Math.max(0, game.countdownEnd - Date.now());
   }
 
@@ -88,6 +90,7 @@ function buildState(forPlayerId) {
     maxPlayers: MAX_PLAYERS,
     minPlayers: MIN_PLAYERS,
     countdownRemaining,
+    countdownEnd,
     winner: game.winner,
     shareUrl: getShareUrl(),
     players: [...game.players.values()].map((pl) => ({

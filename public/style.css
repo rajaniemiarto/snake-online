@@ -157,8 +157,35 @@ h1 {
 
 .lobby-status.countdown {
   color: #fbbf24;
-  font-size: 1.1rem;
+  font-size: 1rem;
   font-weight: 600;
+}
+
+.countdown-banner {
+  width: 100%;
+  max-width: 400px;
+  text-align: center;
+  margin: 8px 0 16px;
+  padding: 20px 16px;
+  background: #1e293b;
+  border: 2px solid #fbbf24;
+  border-radius: 16px;
+}
+
+.countdown-label {
+  font-size: 1rem;
+  color: #fbbf24;
+  margin-bottom: 4px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.countdown-number {
+  font-size: 4.5rem;
+  font-weight: 800;
+  line-height: 1;
+  color: #fbbf24;
+  font-variant-numeric: tabular-nums;
 }
 
 .btn-ready {

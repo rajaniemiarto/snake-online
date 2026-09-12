@@ -21,6 +21,10 @@ const hudScore = document.getElementById('hudScore');
 const gameOverTitle = document.getElementById('gameOverTitle');
 const finalScores = document.getElementById('finalScores');
 const playAgainBtn = document.getElementById('playAgainBtn');
+const countdownBanner = document.getElementById('countdownBanner');
+const countdownNumber = document.getElementById('countdownNumber');
+
+let countdownTimer = null;
 
 shareUrl.textContent = location.origin;
 
@@ -203,17 +207,49 @@ function render() {
     gameOver.classList.add('hidden');
     renderLobby();
   } else if (state.status === 'playing') {
+    stopCountdownTicker();
     lobby.classList.add('hidden');
     gameScreen.classList.remove('hidden');
     gameOver.classList.add('hidden');
     renderGame();
   } else if (state.status === 'ended') {
+    stopCountdownTicker();
     lobby.classList.add('hidden');
     gameScreen.classList.remove('hidden');
     gameOver.classList.remove('hidden');
     renderGame();
     renderGameOver();
   }
+}
+
+function stopCountdownTicker() {
+  if (countdownTimer) {
+    clearInterval(countdownTimer);
+    countdownTimer = null;
+  }
+  countdownBanner.classList.add('hidden');
+}
+
+function updateCountdownDisplay() {
+  if (!state || state.status !== 'countdown') {
+    stopCountdownTicker();
+    return;
+  }
+
+  const end = state.countdownEnd || (Date.now() + (state.countdownRemaining || 0));
+  const secs = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+  countdownNumber.textContent = String(secs);
+  countdownBanner.classList.remove('hidden');
+  lobbyStatus.textContent = secs > 0
+    ? `Get ready! Others can still join`
+    : `Starting…`;
+  lobbyStatus.className = 'lobby-status countdown';
+}
+
+function startCountdownTicker() {
+  updateCountdownDisplay();
+  if (countdownTimer) return;
+  countdownTimer = setInterval(updateCountdownDisplay, 100);
 }
 
 function renderLobby() {
@@ -229,11 +265,10 @@ function renderLobby() {
   readyBtn.classList.toggle('is-ready', isReady);
 
   if (state.status === 'countdown') {
-    const secs = Math.ceil(state.countdownRemaining / 1000);
-    lobbyStatus.textContent = `Starting in ${secs}s — others can still join!`;
-    lobbyStatus.className = 'lobby-status countdown';
+    startCountdownTicker();
     readyBtn.disabled = isReady;
   } else {
+    stopCountdownTicker();
     const ready = state.readyCount;
     if (ready < state.minPlayers) {
       lobbyStatus.textContent = `Waiting for players (${ready}/${state.minPlayers} ready)`;
