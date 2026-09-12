@@ -15,7 +15,7 @@ const BASE_SEGMENTS = 14;
 const GROW_PER_APPLE = 5;
 const YELLOW_GROW_MULT = 5;
 const SNAKE_RADIUS = 9;
-const APPLE_RADIUS = 8;
+const APPLE_RADIUS = 12;
 const SELF_SAFE_SEGMENTS = 10;
 const MAX_PLAYERS = 4;
 const MIN_PLAYERS = 2;
@@ -161,8 +161,11 @@ function pickAppleKind() {
 }
 
 function spawnApple() {
+  if (game.apples.length >= APPLE_COUNT * 2) return;
   const kind = pickAppleKind();
-  for (let attempt = 0; attempt < 40; attempt++) {
+  const minClear = SNAKE_RADIUS * 2 + APPLE_RADIUS;
+
+  for (let attempt = 0; attempt < 60; attempt++) {
     const apple = {
       x: Math.random() * WORLD_W,
       y: Math.random() * WORLD_H,
@@ -171,8 +174,11 @@ function spawnApple() {
     let clear = true;
     for (const [, p] of game.players) {
       if (!p.alive) continue;
-      for (const seg of p.snake) {
-        if (distWrapped(apple.x, apple.y, seg.x, seg.y) < SNAKE_RADIUS * 2.5) {
+      // Only check near the head / recent body to keep spawning reliable as worms grow
+      const checkLen = Math.min(p.snake.length, 40);
+      for (let i = 0; i < checkLen; i++) {
+        const seg = p.snake[i];
+        if (distWrapped(apple.x, apple.y, seg.x, seg.y) < minClear) {
           clear = false;
           break;
         }
@@ -184,11 +190,19 @@ function spawnApple() {
       return;
     }
   }
+
+  // Always place one if space checks fail — never leave the map empty
   game.apples.push({
     x: Math.random() * WORLD_W,
     y: Math.random() * WORLD_H,
     kind,
   });
+}
+
+function ensureApples() {
+  while (game.apples.length < APPLE_COUNT) {
+    spawnApple();
+  }
 }
 
 function buildSnake(x, y, angle, segments) {
@@ -232,6 +246,7 @@ function startGame() {
   });
 
   for (let i = 0; i < APPLE_COUNT; i++) spawnApple();
+  ensureApples();
 
   if (game.tickTimer) clearInterval(game.tickTimer);
   game.tickTimer = setInterval(gameTick, TICK_MS);
@@ -322,25 +337,37 @@ function gameTick() {
     trimSnake(p.snake, p.targetLength);
   }
 
-  for (const [, p] of game.players) {
-    if (!p.alive || p.snake.length === 0) continue;
-    const head = p.snake[0];
+  const remaining = [];
+  let eatenCount = 0;
 
-    game.apples = game.apples.filter((a) => {
+  for (const a of game.apples) {
+    let eatenBy = null;
+    for (const [, p] of game.players) {
+      if (!p.alive || p.snake.length === 0) continue;
+      const head = p.snake[0];
       if (distWrapped(head.x, head.y, a.x, a.y) < SNAKE_RADIUS + APPLE_RADIUS) {
-        const kind = a.kind && APPLE_TYPES[a.kind] ? a.kind : 'red';
-        const info = APPLE_TYPES[kind];
-        p.score += info.points;
-        p.targetLength += info.grow * SEGMENT_SPACING;
-        if (info.boostMs) {
-          p.boostUntil = Math.max(p.boostUntil || 0, Date.now()) + info.boostMs;
-        }
-        spawnApple();
-        return false;
+        eatenBy = p;
+        break;
       }
-      return true;
-    });
+    }
+
+    if (eatenBy) {
+      const kind = a.kind && APPLE_TYPES[a.kind] ? a.kind : 'red';
+      const info = APPLE_TYPES[kind];
+      eatenBy.score += info.points;
+      eatenBy.targetLength += info.grow * SEGMENT_SPACING;
+      if (info.boostMs) {
+        eatenBy.boostUntil = Math.max(eatenBy.boostUntil || 0, Date.now()) + info.boostMs;
+      }
+      eatenCount += 1;
+    } else {
+      remaining.push(a);
+    }
   }
+
+  game.apples = remaining;
+  for (let i = 0; i < eatenCount; i++) spawnApple();
+  ensureApples();
 
   for (const [id, p] of game.players) {
     if (!p.alive || p.snake.length === 0) continue;
